@@ -1,0 +1,95 @@
+#!/bin/bash
+
+[ $(id -u) != 0 ] && sudo "$0"
+[ $(id -u) != 0 ] && exit 0
+
+cat <<EOF
+
+Setting up network as follows:
+
+ ----------------------------------------------[control]
+  |     |                |               |
+  |     |(1)             |(1)            |(1)
+  |  --------         -------         --------
+  |  |      |(2)   (3)|     |(4)   (2)|      |
+  |  |client|---------| PTS |---------|server|
+  |  |      |         |     |         |      |
+  |  --------         -------         --------
+  |                      |(2,trunk)
+  |                      |
+  |                    [ovs]
+  |                      |
+  |                    -----
+  |            (2-v100)|  |(3-v200)
+  |                  ---------
+  |               (1)|       |
+  -------------------|divert |
+                     |       |
+                     ---------
+
+EOF
+
+set -e
+
+ip address show virbr0 >/dev/null 2>&1 || virsh net-start default
+
+[ -f client.qcow2 ] || cp -f trusty.qcow2 client.qcow2
+[ -f server.qcow2 ] || cp -f trusty.qcow2 server.qcow2
+[ -f divert.qcow2 ] || cp -f trusty.qcow2 divert.qcow2
+
+ovs-vsctl --if-exists del-br client-bridge
+ovs-vsctl --if-exists del-br server-bridge
+ovs-vsctl --if-exists del-br divert-bridge
+
+ovs-vsctl add-br client-bridge
+ovs-vsctl add-br server-bridge
+ovs-vsctl add-br divert-bridge
+
+ovs-vsctl wait-until bridge divert-bridge
+
+#ovs-vsctl add-port divert-bridge divert-v100
+#ovs-vsctl add-port divert-bridge divert-v200
+#ovs-vsctl add-port divert-bridge divert-trunk
+#ovs-vsctl wait-until port divert-trunk
+
+#ovs-vsctl set port divert-trunk trunks=0,100,200
+#ovs-vsctl set port divert-v100 tag=100
+#ovs-vsctl set port divert-v200 tag=200
+
+virsh dumpxml client >/dev/null 2>&1 && (virsh destroy client || true; virsh undefine client || true)
+virt-install -n client -r 1024 --os-type=Linux --disk $PWD/client.qcow2,device=disk,bus=virtio \
+              -w bridge=virbr0,model=virtio \
+              --noautoconsole --import
+cbif=$(python ./add-if.py client client-bridge virtio)
+
+
+virsh dumpxml server >/dev/null 2>&1 && (virsh destroy server || true; virsh undefine server || true)
+virt-install -n server -r 1024 --os-type=Linux --disk $PWD/server.qcow2,device=disk,bus=virtio \
+              -w bridge=virbr0,model=virtio \
+              --noautoconsole --import
+sbif=$(python ./add-if.py server server-bridge virtio)
+
+virsh dumpxml divert >/dev/null 2>&1 && (virsh destroy divert || true; virsh undefine divert || true)
+virt-install -n divert -r 1024 --os-type=Linux --disk $PWD/divert.qcow2,device=disk,bus=virtio \
+              -w bridge=virbr0,model=virtio \
+              --noautoconsole --import
+dh1if=$(python ./add-if.py divert divert-bridge virtio)
+dh2if=$(python ./add-if.py divert divert-bridge virtio)
+ovs-vsctl set port $dh1if tag=100
+ovs-vsctl set port $dh2if tag=200
+
+virsh dumpxml pts >/dev/null 2>&1 && (virsh destroy pts || true; virsh undefine pts || true)
+virt-install -n pts -r 1538 --os-type=freebsd8 --disk $PWD/pts.qcow2,device=disk,bus=ide \
+              -w bridge=virbr0,model=e1000 \
+              --noautoconsole --import
+
+pts_dif=$(python ./add-if.py pts divert-bridge e1000)
+pts_cif=$(python ./add-if.py pts client-bridge e1000)
+pts_sif=$(python ./add-if.py pts server-bridge e1000)
+
+ovs-vsctl set port $pts_dif trunks=0,100,200
+
+ifconfig client-bridge up
+ifconfig server-bridge up
+ifconfig divert-bridge up
+ifconfig ovs-system up
