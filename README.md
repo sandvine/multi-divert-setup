@@ -57,7 +57,7 @@ On the divert host, install:
 	  post-down brctl delif divert eth1 eth2
 	  post-down brctl delbr divert
 
-	$ sudo ifup -v bridge
+	$ sudo ifup -v divert
 
 On the server, install:
 
