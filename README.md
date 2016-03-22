@@ -1,4 +1,4 @@
-= Create a test network for multi-divert
+# Create a test network for multi-divert
 
 This script creates 4 virtual machines (client, server, PTS, divert host)
 and wires them on a common control bus.
@@ -29,7 +29,7 @@ with two interfaces, on vlan 100, 200, to that same interface.
                          |       |
                          ---------
 
-= Usage
+# Usage
 
 run 'install' (it wipes out and reinstalls fresh)
 
